@@ -1,0 +1,14 @@
+node_modules/
+
+# 本地运行时产物
+voice-cache/
+*.log
+
+# 密钥 / 本机配置：config.json 里有 API key，绝不入库
+config.json
+.git-credentials
+
+# 系统
+.DS_Store
+Thumbs.db
+desktop.ini

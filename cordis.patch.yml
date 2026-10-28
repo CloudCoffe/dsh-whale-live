@@ -1,0 +1,11 @@
+- insert:
+    - id: dsh-whale-live
+      name: '@local/dsh-whale-live'
+      config:
+        roomId: 10217886
+        dryRun: true
+        autoStart: false
+        vtsEnabled: true
+        vtsPort: 8001
+        ttsEnabled: true
+        queueMaxSize: 10

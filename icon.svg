@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="大肥鱼直播">
+  <defs>
+    <linearGradient id="whaleBody" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5fa8ff"/>
+      <stop offset="1" stop-color="#1f5fd0"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="30" cy="34" rx="22" ry="17" fill="url(#whaleBody)"/>
+  <path d="M48 30c6-8 12-9 14-7-3 3-5 6-5 9 0 3 2 6 5 9-2 2-8 1-14-6z" fill="#2f74de"/>
+  <ellipse cx="31" cy="44" rx="14" ry="7" fill="#cfe6ff" opacity="0.9"/>
+  <circle cx="20" cy="31" r="3.2" fill="#0b2a5b"/>
+  <circle cx="21" cy="30" r="1" fill="#ffffff"/>
+  <path d="M12 42c-3 2-5 5-4 8 3-1 5-3 6-5z" fill="#2f74de"/>
+  <path d="M26 22c1-5 4-8 7-8 0 4-2 7-4 9z" fill="#7cc0ff"/>
+  <circle cx="45" cy="20" r="3" fill="#ffe27a"/>
+  <path d="M52 34h6M53 39h5" stroke="#9fd0ff" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
+</svg>
