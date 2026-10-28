@@ -114,6 +114,21 @@ window.__ModuleLoader__.load({
         'kind.like': '点赞',
         'kind.watched': '人气',
         'kind.other': '其他',
+        'card.memory': '观众记忆',
+        'memory.off': '已关闭',
+        'memory.people': '人',
+        'memory.messages': '条发言',
+        'memory.topN': '名',
+        'memory.title': '记忆里的老面孔（进场会语音欢迎）',
+        'memory.col.rank': '#',
+        'memory.col.name': '观众',
+        'memory.col.count': '发言',
+        'memory.col.visits': '来过',
+        'memory.col.last': '最近一句',
+        'memory.empty': '还没有记忆。开始监听后，观众说的每句话都会记下来 —— 超过门槛的人就沉淀成老面孔。',
+        'btn.testEnter': '试进场',
+        'btn.memoryOn': '观众记忆：开',
+        'btn.memoryOff': '观众记忆：关',
       },
       en: {
         title: 'Whale Live',
@@ -181,6 +196,21 @@ window.__ModuleLoader__.load({
         'kind.like': 'like',
         'kind.watched': 'views',
         'kind.other': 'other',
+        'card.memory': 'Audience memory',
+        'memory.off': 'off',
+        'memory.people': 'people',
+        'memory.messages': 'messages',
+        'memory.topN': 'top',
+        'memory.title': 'Regulars in memory (they get a voice welcome on entry)',
+        'memory.col.rank': '#',
+        'memory.col.name': 'Viewer',
+        'memory.col.count': 'Sent',
+        'memory.col.visits': 'Days',
+        'memory.col.last': 'Last line',
+        'memory.empty': 'No memory yet. Once listening starts, every comment is recorded — those above the threshold settle in as regulars.',
+        'btn.testEnter': 'Test entry',
+        'btn.memoryOn': 'Memory: ON',
+        'btn.memoryOff': 'Memory: OFF',
       },
     };
 
@@ -305,6 +335,14 @@ window.__ModuleLoader__.load({
               value: s.chat?.enabled === false ? t('chat.off') : `${t('chat.replied')} ${s.stats?.replied ?? 0}`,
               on: s.chat?.enabled !== false,
               extra: `${t('chat.throttle')} ${Math.round((s.chat?.cooldownMs ?? 0) / 1000)}s · ${s.chat?.model || ''}`,
+            }),
+            h(Card, {
+              title: t('card.memory'),
+              value: s.memory?.enabled === false
+                ? t('memory.off')
+                : `${s.memory?.viewers ?? 0} ${t('memory.people')}`,
+              on: s.memory?.enabled !== false,
+              extra: `${s.memory?.messages ?? 0} ${t('memory.messages')} · ${s.memory?.topN ?? 5} ${t('memory.topN')}`,
             })),
 
           h('div', { className: 'whale-live-row' },
@@ -319,6 +357,7 @@ window.__ModuleLoader__.load({
             h('button', { className: 'whale-live-btn', disabled: Boolean(busy), onClick: () => act('probe-voice') }, t('btn.probe')),
             h('button', { className: 'whale-live-btn', disabled: Boolean(busy), onClick: () => act('test-gift', { gift: '棒棒糖', user: t('test.user') }) }, t('btn.testGift')),
             h('button', { className: 'whale-live-btn', disabled: Boolean(busy), onClick: () => act('test-chat', { text: t('test.text') }) }, t('btn.testChat')),
+            h('button', { className: 'whale-live-btn', disabled: Boolean(busy), onClick: () => act('test-enter') }, t('btn.testEnter')),
             h('button', {
               className: 'whale-live-btn', disabled: Boolean(busy),
               onClick: () => act('set-config', { chatEnabled: String(s.chat?.enabled === false) }),
@@ -326,11 +365,33 @@ window.__ModuleLoader__.load({
             h('button', {
               className: 'whale-live-btn', disabled: Boolean(busy),
               onClick: () => act('set-config', { giftEnabled: String(s.chat?.giftEnabled === false) }),
-            }, s.chat?.giftEnabled === false ? t('btn.giftOff') : t('btn.giftOn'))),
+            }, s.chat?.giftEnabled === false ? t('btn.giftOff') : t('btn.giftOn')),
+            h('button', {
+              className: 'whale-live-btn', disabled: Boolean(busy),
+              onClick: () => act('set-config', { memoryEnabled: String(s.memory?.enabled === false) }),
+            }, s.memory?.enabled === false ? t('btn.memoryOff') : t('btn.memoryOn'))),
 
           (bili.lastError || vts.lastError)
             ? h('div', { className: 'whale-live-warn' }, `${t('err.prefix')}${bili.lastError || vts.lastError}`)
             : null,
+
+          h('div', { className: 'whale-live-section' },
+            h('h3', null, t('memory.title')),
+            (s.memory?.top ?? []).length
+              ? h('table', { className: 'whale-live-table' },
+                h('thead', null, h('tr', null,
+                  h('th', { style: { width: '40px' } }, t('memory.col.rank')),
+                  h('th', null, t('memory.col.name')),
+                  h('th', { style: { width: '90px' } }, t('memory.col.count')),
+                  h('th', { style: { width: '80px' } }, t('memory.col.visits')),
+                  h('th', null, t('memory.col.last')))),
+                h('tbody', null, s.memory.top.map((m) => h('tr', { key: `mem-${m.rank}-${m.uid || m.name}` },
+                  h('td', null, String(m.rank)),
+                  h('td', null, m.name),
+                  h('td', null, String(m.count)),
+                  h('td', null, String(m.visits)),
+                  h('td', null, m.lastText ?? '')))))
+              : h('div', { className: 'whale-live-hint' }, t('memory.empty'))),
 
           h('div', { className: 'whale-live-section' },
             h('h3', null, t('menu.title')),

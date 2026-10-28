@@ -63,6 +63,8 @@ plugin_manager install_bundle  D:\deepseek harness\chajian\dsh-whale-live
 - `config.json` —— 插件自己的配置（房间号、dryRun、VTS 端口、语音、LLM…）
 - `.vts-token.json` —— VTube Studio 授权令牌
 - `voice-cache\` —— 合成出来的语音 WAV
+- `meme-cache.json` —— 梗库在线补的条目
+- `audience.json` —— 观众记忆（谁说过几句、来过几天、最近说了什么）
 
 DSH 设置页里也能改同样的字段（`roomId` / `dryRun` / `vtsPort` / `ttsEnabled` / `llmEnabled` …）。
 两者优先级：**默认值 < config.json < 设置页里显式设过的值**。
@@ -196,17 +198,76 @@ cnmeme.wiki 是本机唯一能查到新梗的源，但它有两个硬伤，实�
   → plan: 梗库：偷感很重 | 语音（MiMo 流式）
 ```
 
+### 观众记忆：记住每个人，老面孔进场就打招呼（`memoryEnabled`，默认开）
+
+直播间里**每个人说过的话都记着**：昵称、uid、说过几句、来过几天、最近一句是什么。
+说得够多、又排在前几名的，就成了「老面孔」—— **他一进直播间，大肥鱼就用语音喊一句「欢迎 xxx 来看大肥鱼！」**
+
+存档在 `~/.dsh/whale-live/audience.json`（纯文本 JSON，防抖 4 秒写一次）。
+重启、换一场直播、关掉 DSH 再开，都还在 —— 这就是"沉淀"。
+
+**判定要过三道闸**（`lib/memory.mjs` → `checkEnter()`）：
+
+| 闸 | 条件 | 没过会怎样 |
+| --- | --- | --- |
+| 1 | 记忆里有这个人 | 新面孔不欢迎 |
+| 2 | 说过 `memoryMinCount` 句以上（默认 3） | 只说过一两句的不算熟，怕把刚来的人当老朋友 |
+| 3 | 按发言数排在前 `memoryTopN` 名（默认 5） | 排在后面的不欢迎 |
+| 4 | 距上次欢迎 ≥ `memoryWelcomeCooldownMin` 分钟（默认 30） | 进进出出好几次，不念好几遍 |
+
+为什么不欢迎每个进场：房间一热闹，一秒能有好几个进场事件，而一句欢迎要合成 0.9 秒 + 播 3~4 秒。
+**每个都欢迎 = 从头到尾在念"欢迎"，弹幕一句也回不上。** 所以只挑老面孔，而且两次欢迎至少隔 6 秒。
+
+```mermaid
+flowchart TD
+  A[弹幕] --> B[记一笔：谁说的、说了几句]
+  A --> C[进直播间]
+  C --> D{记忆里有他?<br/>说过 3 句以上?<br/>排前 5 名?}
+  D -- 不是 --> E[不出声]
+  D -- 是 --> F{半小时内欢迎过?}
+  F -- 是 --> E
+  F -- 否 --> G[语音：欢迎 xxx 来看大肥鱼！<br/>plan: 老面孔回来：打招呼]
+  B --> H[他说得够多<br/>下次回弹幕时带上<br/>「我记得你」+ 最近几句]
+```
+
+配置项：
+
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `memoryEnabled` | `true` | 关掉就完全记、也不欢迎 |
+| `memoryTopN` | `5` | 前几名算老面孔 |
+| `memoryMinCount` | `3` | 至少说过几句才够格 |
+| `memoryWelcomeCooldownMin` | `30` | 同一个人两次欢迎的最短间隔（分钟） |
+| `memoryMaxViewers` | `2000` | 最多记多少人；超了从"说得最少、最久没来"那端清，前几名永远不动 |
+
+**进场事件是哪来的**：B站的 `INTERACT_WORD`，`msg_type=1` 是进房、`2` 是关注。
+`status` 里的 `bili.cmds` 能看到这个 cmd 有没有在来；如果一直是 0，说明这间房没下发进场事件
+（有的房间只对粉丝团/舰长发），那就只有 `test-enter` 能验证逻辑，别怀疑插件坏了。
+
+**弹幕那侧**顺手用上了这份记忆：老面孔发弹幕时，会给大模型一句
+「`xxx` 是老观众，发过 37 条弹幕、来过 6 天，最近说过「…」「…」」，
+于是它能接一句"我记得你上次说……"。但规则里明确写了**别报数字**，别把统计念出来。
+
+> **为什么不直接用 `dsh-fish-memory`**：那是**会话级**记忆 —— 一个会话一个 JSON，
+> 记的是"我和 ta 聊了什么"，靠"命中的词够特别"来召回，给模型用。
+> 直播间要的正好反过来：记的是**成百上千个别人**，要能数（几句、几天、第几名），
+> 而且人一进房就要**立刻**判定"他是不是熟脸" —— 走召回那套来不及，也不该"够特别才想起"。
+> 所以这里只借了它两个思路：**每人只留最近 3 句原文**（其他只记数字）、**容量满了先淡掉没说过话的**。
+
 ## 六、Agent 工具
 
 | 工具 | 用途 |
 | --- | --- |
 | `whale_live_status` | 看状态（房间、连接、VTS、队列、最近事件、`bili.cmds`、梗库命中） |
-| `whale_live_control` | `start` / `stop` / `vts-connect` / `vts-hotkeys` / `say` / `clear-expression` / `test-chat` / `probe-voice` / `meme` / `meme-online` / `snapshot` |
+| `whale_live_control` | `start` / `stop` / `vts-connect` / `vts-hotkeys` / `say` / `clear-expression` / `test-chat` / `test-enter` / `probe-voice` / `meme` / `meme-online` / `memory` / `memory-reset` / `snapshot` |
 
 | 动作 | 用途 |
 | --- | --- |
 | `meme` | 不带 `text` 看库的状态（词条数、缓存数、队列、上次在线查询）；带 `text` 试着查一条弹幕 |
 | `meme-online` | 强制去 cnmeme.wiki 查一次（要等 2~4 秒），用来验证某个词网站到底有没有 |
+| `memory` | 不带 `text` 看观众记忆概览 + 发言排行榜；带 `text`（昵称）或 `uid` 看某个人的档案 |
+| `test-enter` | 模拟"某个人进直播间"：给 `user` / `uid`，都不给就挑排行榜第 1 名 —— 验证该不该欢迎、说不说得出来 |
+| `memory-reset` | 清空观众记忆（调试用，清了就真没了） |
 
 例：让大肥鱼说一句话 —— `whale_live_control { action: "say", text: "谢谢大家，我下播啦" }`
 
