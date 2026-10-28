@@ -66,6 +66,7 @@ export const Config = !z ? undefined : z.object({
   memoryMinCount: z.natural().default(3).extra('volatile', true),
   memoryWelcomeCooldownMin: z.natural().default(30).extra('volatile', true),
   memoryMaxViewers: z.natural().default(2000).extra('volatile', true),
+  watermarkHidden: z.boolean().default(true).extra('volatile', true),
   queueMaxSize: z.natural().default(10).extra('volatile', true),
 });
 
@@ -194,6 +195,7 @@ const DEFAULTS = {
   memoryMinCount: 3,
   memoryWelcomeCooldownMin: 30,
   memoryMaxViewers: 2000,
+  watermarkHidden: true,
   queueMaxSize: 10,
 };
 
@@ -290,6 +292,7 @@ export function apply(ctx, config = {}) {
     memoryMinCount: num(c.memoryMinCount, DEFAULTS.memoryMinCount),
     memoryWelcomeCooldownMin: num(c.memoryWelcomeCooldownMin, DEFAULTS.memoryWelcomeCooldownMin),
     memoryMaxViewers: num(c.memoryMaxViewers, DEFAULTS.memoryMaxViewers),
+    watermarkHidden: c.watermarkHidden !== false,
   };
   void hostCfg;
   try { mkdirSync(dataDir, { recursive: true }); } catch { /* 建不了也不致命 */ }
@@ -356,6 +359,7 @@ export function apply(ctx, config = {}) {
     cfg.memoryMinCount = num(next.memoryMinCount, DEFAULTS.memoryMinCount);
     cfg.memoryWelcomeCooldownMin = num(next.memoryWelcomeCooldownMin, DEFAULTS.memoryWelcomeCooldownMin);
     cfg.memoryMaxViewers = num(next.memoryMaxViewers, DEFAULTS.memoryMaxViewers);
+    cfg.watermarkHidden = next.watermarkHidden !== false;
     // 观众记忆的旋钮改了就立刻生效，不用重装插件
     try { audience.configure(memoryLimits()); } catch { /* 还没建好就算了 */ }
     return next;
@@ -537,7 +541,10 @@ export function apply(ctx, config = {}) {
     if (client.state().authenticated) return client;
     try {
       await client.connect();
-      return client.state().authenticated ? client : null;
+      if (!client.state().authenticated) return null;
+      // 刚连上就顺手把水印关掉：否则要等到第一次表演结束才消失
+      await hideWatermark(client, { clearFirst: true });
+      return client;
     } catch (err) {
       ctx.logger?.warn?.(`[大肥鱼] 自动连接 VTS 失败: ${err?.message ?? err}`);
       return null;
@@ -676,6 +683,36 @@ export function apply(ctx, config = {}) {
     return { engine: prepared.engine, ms, fallbackReason: prepared.fallbackReason };
   }
 
+  /**
+   * 模型自带的「13 水印消除」表情（`Paramcol_3 = 1`，把 `水印.png` / `水印2.png`
+   * 这两个部件藏起来）。这是**作者自己做的开关**，不是要破解什么。
+   *
+   * ⚠️ 它是 ToggleExpression：触发一次=开，再触发一次=关。
+   *    而我们的复位（RemoveAllExpressions）会把它一起清掉 —— 于是每次表演完水印就回来了。
+   *    所以这里永远"先 RemoveAllExpressions，再触发"，保证是从「关」翻到「开」；
+   *    连按两次也不会把水印又放出来。
+   */
+  const WATERMARK_EXPR = '13 水印消除';
+  let watermarkState = { applied: null, at: '', error: '' };
+
+  async function hideWatermark(client, { clearFirst = false, force = false } = {}) {
+    if ((cfg.watermarkHidden === false && !force) || !client) return false;
+    try {
+      if (clearFirst) await client.clearExpressions();
+      await client.triggerByName(WATERMARK_EXPR);
+      watermarkState = { applied: true, at: now(), error: '' };
+      return true;
+    } catch (err) {
+      const msg = String(err?.message ?? err);
+      // 换了模型 / 这个模型没这个热键：说一次就够，别每次表演都刷一条日志
+      if (watermarkState.error !== msg) {
+        watermarkState = { applied: false, at: now(), error: msg };
+        ctx.logger?.info?.(`[大肥鱼] 水印消除没做成：${msg}`);
+      }
+      return false;
+    }
+  }
+
   async function perform(entry, event) {
     const plan = [];
     if (cfg.dryRun) {
@@ -691,6 +728,9 @@ export function apply(ctx, config = {}) {
     if (!vtsc) {
       // 别静默降级成"只出声"：把原因写进 plan，界面上一眼能看到。
       plan.push(cfg.vts.enabled ? 'VTS 未连接，只出声' : 'VTS 已禁用，只出声');
+    } else if (cfg.watermarkHidden !== false) {
+      // 表演开始前先归零：表情清空 + 水印关掉。状态确定，后面怎么 toggle 都不会错。
+      await hideWatermark(vtsc, { clearFirst: true });
     }
     let speech = renderSpeech(entry.speech, { ...event, text: event.text ?? '' });
     const needsLlm = Boolean(entry.replyWithLlm) && event.kind === 'chat';
@@ -787,8 +827,10 @@ export function apply(ctx, config = {}) {
       if (vtsc) {
         try {
           await vtsc.clearExpressions();
+          // 复位会把水印开关一起清掉，这里立刻关回去（不然每次表演完水印都闪回来）
+          await hideWatermark(vtsc);
           await vtsc.moveModel({ rotation: 0, seconds: 0.3 });
-          plan.push('已复位');
+          plan.push(cfg.watermarkHidden !== false ? '已复位（水印已隐藏）' : '已复位');
         } catch (err) {
           ctx.logger?.warn?.(`[大肥鱼] 复位失败: ${err?.message ?? err}`);
           plan.push(`复位失败：${err?.message ?? err}`);
@@ -968,6 +1010,7 @@ export function apply(ctx, config = {}) {
       },
       meme: { enabled: cfg.memeEnabled, ...memeWiki.state },
       memory: { enabled: cfg.memoryEnabled, ...audience.state },
+      watermark: { hidden: cfg.watermarkHidden, hotkey: WATERMARK_EXPR, ...watermarkState },
       stats,
       lastAction: pickAction(lastAction),
       events: events.slice(0, 30),
@@ -1006,16 +1049,16 @@ export function apply(ctx, config = {}) {
 
   const controlTool = {
     name: 'whale_live_control',
-    description: '控制大肥鱼直播互动：开始/停止监听直播间、连接 VTube Studio、试触发一次表演、让大肥鱼说一句话、模拟一条礼物/弹幕/进场、查梗库（meme / meme-online）、查观众记忆（memory）与模拟老面孔进场（test-enter）。',
+    description: '控制大肥鱼直播互动：开始/停止监听直播间、连接 VTube Studio、试触发一次表演、让大肥鱼说一句话、模拟一条礼物/弹幕/进场、查梗库（meme / meme-online）、查观众记忆（memory）与模拟老面孔进场（test-enter）、切换水印显隐（watermark）。',
     parameters: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['snapshot', 'start', 'stop', 'vts-connect', 'vts-hotkeys', 'say', 'clear-expression', 'test-gift', 'test-chat', 'test-enter', 'probe-voice', 'meme', 'meme-online', 'memory', 'memory-reset'],
+          enum: ['snapshot', 'start', 'stop', 'vts-connect', 'vts-hotkeys', 'say', 'clear-expression', 'watermark', 'test-gift', 'test-chat', 'test-enter', 'probe-voice', 'meme', 'meme-online', 'memory', 'memory-reset'],
           description: '要执行的动作',
         },
-        text: { type: 'string', description: 'say / test-chat 的文本；memory 时用来查某个观众' },
+        text: { type: 'string', description: 'say / test-chat 的文本；memory 时查某个观众；watermark 时填 hide（默认）或 show' },
         gift: { type: 'string', description: 'test-gift 的礼物名，如「棒棒糖」' },
         user: { type: 'string', description: 'test-gift / test-chat / test-enter 的观众名' },
         uid: { type: 'number', description: 'test-enter / memory 的观众 uid（有就给，没有按昵称查）' },
@@ -1069,7 +1112,35 @@ export function apply(ctx, config = {}) {
           const vtsClear = await vtsReady();
           if (!vtsClear) return { ok: false, reason: 'VTS 未连接' };
           await vtsClear.clearExpressions();
-          return { ok: true };
+          // 清表情连水印开关一起清了，顺手关回去
+          const stillHidden = await hideWatermark(vtsClear);
+          return { ok: true, watermarkHidden: stillHidden };
+        }
+        case 'watermark': {
+          // text = hide（默认）/ show。模型自带开关，不碰模型文件。
+          const mode = String(args?.text ?? 'hide').trim().toLowerCase();
+          const show = ['show', 'on', '显示'].includes(mode);
+          const client = await vtsReady();
+          if (!client) return compact({ ok: false, reason: 'VTS 未连接 —— 水印开关得 VTS 在线才生效' });
+          // 一样先清空：清完水印热键必然是「关」，再决定要不要打开
+          await client.clearExpressions();
+          if (show) {
+            watermarkState = { applied: false, at: now(), error: '' };
+            // 记住这个选择：否则下次表演复位时又自动关回去，看着像没生效
+            applyPatch({ watermarkHidden: false });
+            return compact({ ok: true, hidden: false, persisted: true, note: '表情已清空 → 水印显示出来了（已记住，复位时不会再自动关）' });
+          }
+          const ok = await hideWatermark(client, { force: true });
+          if (ok) applyPatch({ watermarkHidden: true });
+          return compact({
+            ok,
+            hidden: ok,
+            hotkey: WATERMARK_EXPR,
+            persisted: Boolean(ok),
+            note: ok
+              ? '已触发「13 水印消除」，以后每次表演复位后都会自动关回去'
+              : `触发失败：${watermarkState.error}`,
+          });
         }
         case 'test-gift': {
           const event = {

@@ -259,7 +259,7 @@ flowchart TD
 | 工具 | 用途 |
 | --- | --- |
 | `whale_live_status` | 看状态（房间、连接、VTS、队列、最近事件、`bili.cmds`、梗库命中） |
-| `whale_live_control` | `start` / `stop` / `vts-connect` / `vts-hotkeys` / `say` / `clear-expression` / `test-chat` / `test-enter` / `probe-voice` / `meme` / `meme-online` / `memory` / `memory-reset` / `snapshot` |
+| `whale_live_control` | `start` / `stop` / `vts-connect` / `vts-hotkeys` / `say` / `clear-expression` / `watermark` / `test-chat` / `test-enter` / `probe-voice` / `meme` / `meme-online` / `memory` / `memory-reset` / `snapshot` |
 
 | 动作 | 用途 |
 | --- | --- |
@@ -268,6 +268,7 @@ flowchart TD
 | `memory` | 不带 `text` 看观众记忆概览 + 发言排行榜；带 `text`（昵称）或 `uid` 看某个人的档案 |
 | `test-enter` | 模拟"某个人进直播间"：给 `user` / `uid`，都不给就挑排行榜第 1 名 —— 验证该不该欢迎、说不说得出来 |
 | `memory-reset` | 清空观众记忆（调试用，清了就真没了） |
+| `watermark` | `text: "hide"` 隐藏水印（默认）/ `"show"` 显示；同时把这个选择记进 `watermarkHidden` |
 
 例：让大肥鱼说一句话 —— `whale_live_control { action: "say", text: "谢谢大家，我下播啦" }`
 
@@ -312,6 +313,42 @@ VTS 的表情热键是 **toggle**：触发一次 = 打开，它**不会自己消
 说明 VTS 那边没接受（通常是没有连上，或模型里那个 `RemoveAllExpressions` 热键被删了）。
 
 还有一条体验改进：只要 `vtsEnabled` 打开，**第一次表演时会自动连 VTS**，重装/重启 DSH 之后不用再手点「连接 VTS」；万一真没连上，`plan` 里会明确写「VTS 未连接，只出声」，不会无声无息地降级。
+
+### 水印：模型自带开关，但我们的复位会把它清掉
+
+大肥鱼模型（`D:\deepseek harness\live2d\_extract\大肥鱼-B站`）里，水印是**两个独立部件**
+（`Part46 = 水印.png`、`Part45 = 水印2.png`），作者留了一个参数 `Paramcol_3`（名字就叫
+**「3.水印消除」**）配了一个表情热键 **`13 水印消除`**：
+
+```json
+{ "Type": "Live2D Expression",
+  "Parameters": [ { "Id": "Paramcol_3", "Value": 1.0, "Blend": "Add" } ] }
+```
+
+所以水印**不用改模型文件**，点一下热键就没了 —— 这是作者给的开关，不是要破解什么。
+（VTS 里手动点：`大肥鱼` 模型的热键面板 → `13 水印消除`。）
+
+问题出在我们自己这边：`perform()` 的复位是 `RemoveAllExpressions`，**它会把这个开关一起清掉**，
+于是每次表演完水印又冒回来。所以插件加了一步：
+
+```
+表演开始前：RemoveAllExpressions → 触发「13 水印消除」     （先归零，再打开）
+表演结束后：RemoveAllExpressions → 触发「13 水印消除」     （复位之后立刻关回去）
+```
+
+⚠️ 这个热键是 **ToggleExpression**：触发一次开、再触发一次关。所以**必须先清空再触发**，
+不能凭"我觉得它已经开着"直接点 —— 那会正好把水印放出来。代码里 `hideWatermark()` 就是按这个顺序写的。
+
+| 配置 / 动作 | 作用 |
+| --- | --- |
+| `watermarkHidden`（默认 `true`） | 每次复位后自动把水印关回去 |
+| 面板按钮「水印：已隐藏 / 显示中」 | 一个动作既切当前画面，也把选择写进配置（否则下次复位又自己关回去） |
+| `whale_live_control { action: "watermark", text: "hide" }` | 手动隐藏（`text: "show"` 显示） |
+
+> 想**彻底**不要它，还有一个更省事的验证法：在 VTS 里点一次 `13 水印消除`，然后关掉 VTS 再打开，
+> 看水印还在不在 —— 如果没了，说明 VTS 把它记进了 `大肥鱼.vtube.json` 的 `SavedActiveExpressions`，
+> 那就跟插件无关了（我们只在复位时才会动它）。
+> 我们这边**没有**去改模型文件或 `.vtube.json`：那些是作者的文件，动坏了 VTS 会直接加载失败。
 
 ### 这台机器上的系统代理（以后接任何境外 API 都会遇到）
 

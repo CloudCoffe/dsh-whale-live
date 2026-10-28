@@ -129,6 +129,8 @@ window.__ModuleLoader__.load({
         'btn.testEnter': '试进场',
         'btn.memoryOn': '观众记忆：开',
         'btn.memoryOff': '观众记忆：关',
+        'btn.watermarkHidden': '水印：已隐藏',
+        'btn.watermarkShown': '水印：显示中',
       },
       en: {
         title: 'Whale Live',
@@ -211,6 +213,8 @@ window.__ModuleLoader__.load({
         'btn.testEnter': 'Test entry',
         'btn.memoryOn': 'Memory: ON',
         'btn.memoryOff': 'Memory: OFF',
+        'btn.watermarkHidden': 'Watermark: hidden',
+        'btn.watermarkShown': 'Watermark: visible',
       },
     };
 
@@ -369,7 +373,12 @@ window.__ModuleLoader__.load({
             h('button', {
               className: 'whale-live-btn', disabled: Boolean(busy),
               onClick: () => act('set-config', { memoryEnabled: String(s.memory?.enabled === false) }),
-            }, s.memory?.enabled === false ? t('btn.memoryOff') : t('btn.memoryOn'))),
+            }, s.memory?.enabled === false ? t('btn.memoryOff') : t('btn.memoryOn')),
+            h('button', {
+              className: 'whale-live-btn', disabled: Boolean(busy),
+              // 走 watermark 动作：它既切当前这一帧，也把选择记进配置（下次复位不会又关回去）
+              onClick: () => act('watermark', { text: s.watermark?.hidden === false ? 'hide' : 'show' }),
+            }, s.watermark?.hidden === false ? t('btn.watermarkShown') : t('btn.watermarkHidden'))),
 
           (bili.lastError || vts.lastError)
             ? h('div', { className: 'whale-live-warn' }, `${t('err.prefix')}${bili.lastError || vts.lastError}`)
