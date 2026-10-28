@@ -58,6 +58,8 @@ export const Config = !z ? undefined : z.object({
   memeEnabled: z.boolean().default(true).extra('volatile', true),
   memeDbPath: z.string().default('').extra('volatile', true),
   memeMaxChars: z.natural().default(220).extra('volatile', true),
+  memeOnline: z.boolean().default(true).extra('volatile', true),
+  memeProxy: z.string().default('').extra('volatile', true),
   queueMaxSize: z.natural().default(10).extra('volatile', true),
 });
 
@@ -167,6 +169,8 @@ const DEFAULTS = {
   memeEnabled: true,
   memeDbPath: 'D:\\deepseek harness\\chajian\\astrbot_plugin_memewiki\\data\\memes.db',
   memeMaxChars: 220,
+  memeOnline: true,
+  memeProxy: 'http://127.0.0.1:7890',
   queueMaxSize: 10,
 };
 
@@ -256,6 +260,8 @@ export function apply(ctx, config = {}) {
     memeEnabled: c.memeEnabled !== false,
     memeDbPath: c.memeDbPath || DEFAULTS.memeDbPath,
     memeMaxChars: num(c.memeMaxChars, DEFAULTS.memeMaxChars),
+    memeOnline: c.memeOnline !== false,
+    memeProxy: c.memeProxy ?? DEFAULTS.memeProxy,
   };
   void hostCfg;
   try { mkdirSync(dataDir, { recursive: true }); } catch { /* 建不了也不致命 */ }
@@ -307,6 +313,8 @@ export function apply(ctx, config = {}) {
     cfg.memeEnabled = next.memeEnabled !== false;
     cfg.memeDbPath = next.memeDbPath || DEFAULTS.memeDbPath;
     cfg.memeMaxChars = num(next.memeMaxChars, DEFAULTS.memeMaxChars);
+    cfg.memeOnline = next.memeOnline !== false;
+    cfg.memeProxy = next.memeProxy ?? DEFAULTS.memeProxy;
     return next;
   };
   for (const note of hostDeps.notes) ctx.logger?.info?.(`[大肥鱼] ${note}`);
@@ -352,9 +360,15 @@ export function apply(ctx, config = {}) {
    * 梗库：直接读 astrbot_plugin_memewiki 那份 SQLite（6668 条快照）。
    * 弹幕里"完整出现"某个词条标题就算涉及梗，把词条解释喂给大模型，避免它瞎编出处。
    * 查一次 1 毫秒级，不影响直播延迟。
+   *
+   * 本地没命中时不会当场去网上查（实测那站一次 2~4 秒、结果还常跑偏），
+   * 而是把"像是在问的那个词"丢进后台队列慢慢补，第二次提到时就已经是本地缓存了。
    */
   const memeWiki = createMemeWiki({
     dbPath: cfg.memeDbPath,
+    online: cfg.memeOnline,
+    proxy: cfg.memeProxy,
+    cachePath: path.join(dataDir, 'meme-cache.json'),
     log: (m) => ctx.logger?.info?.(`[大肥鱼] ${m}`),
   });
 
@@ -874,13 +888,13 @@ export function apply(ctx, config = {}) {
 
   const controlTool = {
     name: 'whale_live_control',
-    description: '控制大肥鱼直播互动：开始/停止监听直播间、连接 VTube Studio、试触发一次表演、让大肥鱼说一句话、模拟一条礼物/弹幕。',
+    description: '控制大肥鱼直播互动：开始/停止监听直播间、连接 VTube Studio、试触发一次表演、让大肥鱼说一句话、模拟一条礼物/弹幕、查梗库（meme / meme-online）。',
     parameters: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['snapshot', 'start', 'stop', 'vts-connect', 'vts-hotkeys', 'say', 'clear-expression', 'test-gift', 'test-chat', 'probe-voice', 'meme'],
+          enum: ['snapshot', 'start', 'stop', 'vts-connect', 'vts-hotkeys', 'say', 'clear-expression', 'test-gift', 'test-chat', 'probe-voice', 'meme', 'meme-online'],
           description: '要执行的动作',
         },
         text: { type: 'string', description: 'say / test-chat 的文本' },
@@ -964,6 +978,22 @@ export function apply(ctx, config = {}) {
         case 'probe-voice': {
           voices = await probeVoice();
           return { voices };
+        }
+        case 'meme-online': {
+          // 强制去 cnmeme.wiki 查一次（要等 2~4 秒，只用于手动验证）
+          const term = String(args?.text ?? '').trim();
+          if (!term) return compact({ ok: false, reason: '要给 text' });
+          const t0 = Date.now();
+          const entry = await memeWiki.lookupOnline(term);
+          return compact({
+            ok: true,
+            term,
+            ms: Date.now() - t0,
+            hit: Boolean(entry),
+            title: entry?.title ?? '',
+            summary: entry ? (entry.fallbackText || '').slice(0, 300) : '',
+            note: entry ? '已写进缓存，下次弹幕提到就直接用' : '标题对不上，没收录（宁可不答也别答错）',
+          });
         }
         case 'meme': {
           // 手动查梗：给 text 就查这条弹幕，不给就看库的状态
