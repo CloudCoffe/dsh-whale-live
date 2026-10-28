@@ -11,8 +11,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createBiliLive } from './lib/bili.mjs';
 import { createVts } from './lib/vts.mjs';
-import { synthesize, playWithLipSync, prepareBreeze, probeVoice } from './lib/tts.mjs';
-import { createBreezeWorker } from './lib/breeze-worker.mjs';
+import { synthesize, playWithLipSync, probeVoice } from './lib/tts.mjs';
 import { prepareMimo, mimoCachePath, synthesizeMimo } from './lib/mimo.mjs';
 import { createPcmSession, resolveFfplay, rmsLevel, PCM_SAMPLE_RATE } from './lib/ffplay.mjs';
 import { clampSpeech } from './lib/speech.mjs';
@@ -43,16 +42,10 @@ export const Config = !z ? undefined : z.object({
   ttsVoice: z.string().default('').extra('volatile', true),
   ttsMaxChars: z.natural().default(40).extra('volatile', true),
   ttsEngine: z.string().default('mimo').extra('volatile', true),
-  breezeApiKey: z.string().default('').extra('volatile', true),
-  breezeVoiceId: z.string().default('voc_j4rdp4py2ra3').extra('volatile', true),
-  breezeBaseUrl: z.string().default('https://api.breeze.blue').extra('volatile', true),
-  breezeModel: z.string().default('breeze-tts-2').extra('volatile', true),
-  breezeInstructions: z.string().default('语气自然活泼，带一点撒娇和傲娇，语速稍快。').extra('volatile', true),
-  breezeGuidance: z.number().default(4).extra('volatile', true),
   mimoApiKey: z.string().default('').extra('volatile', true),
   mimoBaseUrl: z.string().default('https://api.xiaomimimo.com').extra('volatile', true),
   mimoModel: z.string().default('mimo-v2.5-tts-voicedesign').extra('volatile', true),
-  mimoVoiceDesc: z.string().default('一只圆滚滚的胖鲸鱼，年轻女声，音色偏亮偏甜，说话带点傲娇和俏皮，语速稍快。').extra('volatile', true),
+  mimoVoiceDesc: z.string().default('甜而不腻的少女音，吐字干净清晰，语速快，有点小脾气。').extra('volatile', true),
   mimoVoice: z.string().default('').extra('volatile', true),
   llmEnabled: z.boolean().default(false).extra('volatile', true),
   llmBaseUrl: z.string().default('https://dashscope.aliyuncs.com/compatible-mode/v1').extra('volatile', true),
@@ -155,16 +148,10 @@ const DEFAULTS = {
   ttsVoice: '',
   ttsMaxChars: 40,
   ttsEngine: 'mimo',
-  breezeApiKey: '',
-  breezeVoiceId: 'voc_j4rdp4py2ra3',
-  breezeBaseUrl: 'https://api.breeze.blue',
-  breezeModel: 'breeze-tts-2',
-  breezeInstructions: '语气自然活泼，带一点撒娇和傲娇，语速稍快。',
-  breezeGuidance: 4,
   mimoApiKey: '',
   mimoBaseUrl: 'https://api.xiaomimimo.com',
   mimoModel: 'mimo-v2.5-tts-voicedesign',
-  mimoVoiceDesc: '一只圆滚滚的胖鲸鱼，年轻女声，音色偏亮偏甜，说话带点傲娇和俏皮，语速稍快。',
+  mimoVoiceDesc: '甜而不腻的少女音，吐字干净清晰，语速快，有点小脾气。',
   mimoVoice: '',
   llmEnabled: false,
   llmBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
@@ -237,18 +224,10 @@ export function apply(ctx, config = {}) {
     },
     tts: {
       enabled: c.ttsEnabled !== false,
-      engine: c.ttsEngine === 'sapi' ? 'sapi' : (c.ttsEngine === 'breeze' ? 'breeze' : 'mimo'),
+      engine: c.ttsEngine === 'sapi' ? 'sapi' : 'mimo',
       rate: num(c.ttsRate, DEFAULTS.ttsRate),
       voice: c.ttsVoice ?? '',
       maxChars: num(c.ttsMaxChars, DEFAULTS.ttsMaxChars),
-      breeze: {
-        apiKey: c.breezeApiKey ?? '',
-        voiceId: c.breezeVoiceId || DEFAULTS.breezeVoiceId,
-        baseUrl: c.breezeBaseUrl || DEFAULTS.breezeBaseUrl,
-        model: c.breezeModel || DEFAULTS.breezeModel,
-        instructions: c.breezeInstructions ?? '',
-        guidanceScale: num(c.breezeGuidance, DEFAULTS.breezeGuidance),
-      },
       mimo: {
         apiKey: c.mimoApiKey ?? '',
         baseUrl: c.mimoBaseUrl || DEFAULTS.mimoBaseUrl,
@@ -299,15 +278,9 @@ export function apply(ctx, config = {}) {
     cfg.vts.enabled = next.vtsEnabled !== false;
     cfg.vts.port = num(next.vtsPort, DEFAULTS.vtsPort);
     cfg.tts.enabled = next.ttsEnabled !== false;
-    cfg.tts.engine = next.ttsEngine === 'sapi' ? 'sapi' : (next.ttsEngine === 'breeze' ? 'breeze' : 'mimo');
+    cfg.tts.engine = next.ttsEngine === 'sapi' ? 'sapi' : 'mimo';
     cfg.tts.rate = num(next.ttsRate, DEFAULTS.ttsRate);
     cfg.tts.maxChars = num(next.ttsMaxChars, DEFAULTS.ttsMaxChars);
-    cfg.tts.breeze.apiKey = next.breezeApiKey ?? '';
-    cfg.tts.breeze.voiceId = next.breezeVoiceId || DEFAULTS.breezeVoiceId;
-    cfg.tts.breeze.baseUrl = next.breezeBaseUrl || DEFAULTS.breezeBaseUrl;
-    cfg.tts.breeze.model = next.breezeModel || DEFAULTS.breezeModel;
-    cfg.tts.breeze.instructions = next.breezeInstructions ?? '';
-    cfg.tts.breeze.guidanceScale = num(next.breezeGuidance, DEFAULTS.breezeGuidance);
     cfg.tts.mimo.apiKey = next.mimoApiKey ?? '';
     cfg.tts.mimo.baseUrl = next.mimoBaseUrl || DEFAULTS.mimoBaseUrl;
     cfg.tts.mimo.model = next.mimoModel || DEFAULTS.mimoModel;
@@ -356,13 +329,10 @@ export function apply(ctx, config = {}) {
   const queue = createQueue({ maxSize: cfg.queue.maxSize, log: (m) => ctx.logger?.warn?.(`[大肥鱼] ${m}`) });
 
   /**
-   * 常驻的 BreezeBlue 合成进程：进程留着、连接复用、自动走系统代理。
-   * 冷启动一次 4.3 秒，热连接只要 2.6 秒（首包 0.85 秒）—— 差的就是这 1.7 秒的握手钱。
+   * 语音合成只会走 MiMo（云端），失败退回本地 SAPI。
+   * 以前的 BreezeBlue 常驻进程已移除 —— 它在这台机器上唯一不可替代的东西是
+   * "走系统代理"这个结论，那条记在 README 的坑表里了。
    */
-  const breezeWorker = createBreezeWorker({
-    script: path.join(here, 'lib', 'breeze-worker.ps1'),
-    log: (m) => ctx.logger?.warn?.(`[大肥鱼] ${m}`),
-  });
   let lastSynthTiming = null;
 
   /** ffplay 是否可用（决定能不能边到边播）。DSH 宿主 PATH 是启动快照，所以要主动去找。 */
@@ -493,28 +463,6 @@ export function apply(ctx, config = {}) {
       }
     }
 
-    if (t.engine === 'breeze' && t.breeze.apiKey && t.breeze.voiceId) {
-      try {
-        const file = await prepareBreeze(text, {
-          apiKey: t.breeze.apiKey,
-          voiceId: t.breeze.voiceId,
-          baseUrl: t.breeze.baseUrl,
-          model: t.breeze.model,
-          languageCode: 'zh',
-          instructions: t.breeze.instructions,
-          guidanceScale: t.breeze.guidanceScale,
-          cacheDir: outDir,
-          worker: breezeWorker,
-          log: (m) => { lastSynthTiming = m; log(m); },
-        });
-        return { engine: 'breeze', file, keep: true };
-      } catch (err) {
-        const reason = String(err?.message ?? err);
-        log(`BreezeBlue 失败，回退 SAPI：${reason}`);
-        const file = await synthesize(text, { rate: t.rate, voice: t.voice, outDir });
-        return { engine: 'sapi', file, keep: false, fallbackReason: reason };
-      }
-    }
     const file = await synthesize(text, { rate: t.rate, voice: t.voice, outDir });
     return { engine: 'sapi', file, keep: false };
   }
@@ -708,9 +656,7 @@ export function apply(ctx, config = {}) {
             stats.spoken += 1;
             plan.push(prepared.engine === 'mimo'
               ? '语音（MiMo）'
-              : (prepared.engine === 'breeze'
-                ? '语音（BreezeBlue）'
-                : (prepared.fallbackReason ? `语音（SAPI 兜底：${prepared.fallbackReason.slice(0, 44)}）` : '语音（SAPI）')));
+              : (prepared.fallbackReason ? `语音（SAPI 兜底：${prepared.fallbackReason.slice(0, 44)}）` : '语音（SAPI）'));
           }
         } catch (err) {
           ctx.logger?.warn?.(`[大肥鱼] 语音失败: ${err?.message ?? err}`);
@@ -837,16 +783,10 @@ export function apply(ctx, config = {}) {
       vts: vts ? { enabled: true, ...vts.state() } : { enabled: false },
       tts: {
         engine: cfg.tts.engine,
-        ready: cfg.tts.engine === 'mimo'
-          ? Boolean(cfg.tts.mimo.apiKey)
-          : (cfg.tts.engine === 'breeze'
-            ? Boolean(cfg.tts.breeze.apiKey && cfg.tts.breeze.voiceId)
-            : true),
-        voiceId: cfg.tts.engine === 'mimo' ? (cfg.tts.mimo.voice || cfg.tts.mimo.model) : cfg.tts.breeze.voiceId,
-        model: cfg.tts.engine === 'mimo' ? cfg.tts.mimo.model : cfg.tts.breeze.model,
-        guidanceScale: cfg.tts.breeze.guidanceScale,
+        ready: cfg.tts.engine === 'mimo' ? Boolean(cfg.tts.mimo.apiKey) : true,
+        voiceId: cfg.tts.engine === 'mimo' ? (cfg.tts.mimo.voice || cfg.tts.mimo.model) : cfg.tts.voice,
+        model: cfg.tts.engine === 'mimo' ? cfg.tts.mimo.model : 'sapi',
         voiceDesc: cfg.tts.mimo.voiceDesc,
-        worker: breezeWorker.state(),
         ffplay: { ok: ffplayInfo.ok, path: ffplayInfo.ok ? ffplayInfo.path : '', note: ffplayInfo.note },
         streaming: cfg.tts.engine === 'mimo' && Boolean(cfg.tts.mimo.apiKey) && ffplayInfo.ok,
         lastSynth: lastSynthTiming,
@@ -1053,7 +993,7 @@ export function apply(ctx, config = {}) {
     return () => {
       for (const d of disposers) { try { d?.(); } catch { /* ignore */ } }
       queue.dispose();
-      breezeWorker.dispose();
+      try { activeSession?.stop(); } catch { /* ignore */ }
       bili.stop();
       void vts?.disconnect();
     };

@@ -155,60 +155,25 @@ VTS 的表情热键是 **toggle**：触发一次 = 打开，它**不会自己消
 
 还有一条体验改进：只要 `vtsEnabled` 打开，**第一次表演时会自动连 VTS**，重装/重启 DSH 之后不用再手点「连接 VTS」；万一真没连上，`plan` 里会明确写「VTS 未连接，只出声」，不会无声无息地降级。
 
-## 十、语音后端：BreezeBlue
+### 这台机器上的系统代理（以后接任何境外 API 都会遇到）
 
-`ttsEngine: "breeze"` 时走 [BreezeBlue](https://breezeblue.ai) 云端 TTS（模型 `breeze-tts-2`）。音色不靠训练、不需要显卡 —— 用一句话描述捏出来。
-
-配置项（`config.json` / 设置页同名）：`breezeApiKey`、`breezeVoiceId`、`breezeBaseUrl`、
-`breezeModel`、`breezeInstructions`、`breezeGuidance`。
-
-### 三个实测踩出来的坑
-
-**1. 不要用 Node 的网络栈去请求它。** 同一句话（`output_format=pcm_24000&delivery=sync`）：
+`127.0.0.1:7890` 开着，`.NET / PowerShell / Invoke-WebRequest` **自动走代理，Node 不走**。
+同一个境外请求两条路的差距是**数量级**的：
 
 | 走法 | 结果 |
 | --- | --- |
-| PowerShell `Invoke-WebRequest` | **3.3~3.4 秒**稳定 |
+| PowerShell `Invoke-WebRequest` | 3.3~3.4 秒稳定 |
 | Node `fetch` | 12.6 秒（IPv6 先试再回退） |
 | Node `https` + `family:4` + keepAlive | 27 秒 `ECONNRESET` / 88 秒超时 |
 
-所以 `synthesizeBreeze()` 是 **shell 出 PowerShell 拿音频**，且 API Key 只从 **stdin** 传
-（base64，因为 PowerShell 5.1 按本地代码页解码 stdin，直接塞中文会变成乱码 → `ConvertFrom-Json` 报错）。
+所以"Node 北向很差、PowerShell 很好"不是玄学，是代理。**踩坑的代价**：有一次我据此判定
+某接口"流式不可用"（测出 171 秒），其实是 Node 绕过代理走了坏路 —— 换成走代理的 PowerShell，
+流式一切正常。
 
-**2. 根因是代理。** 这台机器开着系统代理 `127.0.0.1:7890`：**.NET / PowerShell 自动走代理，Node 不走**。
-所以"Node 北向很差、PowerShell 很好"不是玄学，是代理。也因此早期判定"`/stream` 不能用"
-是**错的** —— 那是 Node 绕过代理走了坏路，走代理的流式一切正常。
+推论：接境外服务的代码，要么显式用系统代理，要么就别用 Node 的网络栈。
+**国内服务（比如小米 MiMo）反过来 —— Node 直连反而最快，别多此一举套代理。**
 
-**3. 失败绝不静默换音色。** BreezeBlue 报错时退回 SAPI，但原因会写进 `plan`：
-`语音（SAPI 兜底：<原因>）`。看到这行就说明这场直播听到的不是大肥鱼的声音。
-
-### 常驻进程 + 走系统代理
-
-"每次新起一个 PowerShell 去 POST"一句话要等 **4.3 秒**才出声。拆开算账：
-
-| 走法 | 到齐时间 | 首包 |
-| --- | --- | --- |
-| Node `fetch`（不走代理，直连） | 12.6s~88s | 经常 ECONNRESET |
-| PowerShell 一次性 + `sync` | 4.3s | —（等整段） |
-| PowerShell 一次性 + `/stream`（冷） | 3.0s | 1.7~3.0s |
-| **常驻进程 + `/stream`（热）** | **2.1~2.6s** | **0.65~0.85s** |
-
-实现：`lib/breeze-worker.ps1` 是个常驻进程，`HttpClient` 留着不销毁，连接复用，
-stdin/stdout 走 base64 JSON 一问一答；Node 侧 `lib/breeze-worker.mjs` 负责起进程、串行发请求、
-超时/崩溃后自动重起。进程起不来时自动退回"一次性 PowerShell"（慢，但独立）。
-
-⚠️ **工作进程那条路必须显式带 `instructions` / `voice_settings`**：第一版漏了，
-结果"语气活泼、带点傲娇"这段描述被静默丢弃，音色描述等于白写。`breeze-worker.ps1` 里已补上。
-
-`status` 的 `tts.lastSynth` 会显示实测值，例如
-`BreezeBlue 合成 17 字 → 3.20 秒音频（首包 664ms / 共 2091ms）`。
-
-### 计费和缓存
-
-按量计费（每次合成扣额度），所以同一句话走磁盘缓存 `voice-cache\breeze-<hash>.wav`，
-重复的固定台词不重复扣费；带观众昵称的句子每次都不同，会正常计费。
-
-## 十一、语音后端：小米 MiMo（默认）
+## 十、语音后端：小米 MiMo（默认）
 
 `ttsEngine: 'mimo'`。小米 MiMo-V2.5-TTS 的接口**反直觉** —— 它不提供 `/v1/audio/speech`，
 而是**骑在 `/v1/chat/completions` 上**，音频以 base64 塞在返回消息里：
@@ -220,7 +185,7 @@ audio.format        = wav | mp3 | pcm | pcm16（流式建议 pcm16）
 audio.voice         = 内置音色名 / 克隆模型的 DataURL 样本
 ```
 
-输出统一 **24000Hz 单声道 16bit**，和 BreezeBlue 一致，口型模块直接复用。
+输出统一 **24000Hz 单声道 16bit**，和本地 SAPI 共用同一套口型模块。
 
 ### 三个模型
 
@@ -255,12 +220,14 @@ audio.voice         = 内置音色名 / 克隆模型的 DataURL 样本
 
 TTS 系列**当前限时免费**（RPM 100 / TPM 10M）。设计模型和克隆模型都免费。
 
-### 换回 BreezeBlue
+### 兜底：本地 SAPI
 
-`ttsEngine` 改成 `'breeze'` 即可，代码两条路都在；`'sapi'` 是本地兜底。
-任一路失败都会退回 SAPI，并把原因写进 `plan`（`语音（SAPI 兜底：…）`），绝不静默换声音。
+MiMo 不可用时（没配 key、超时、接口挂了）会自动退回 **Windows 自带语音**，保证这场直播还有声音。
+但**绝不静默换声音**：原因会写进 `plan`，看到 `语音（SAPI 兜底：<原因>）` 就说明这句不是大肥鱼的嗓子。
 
-## 十二、边下边播（ffplay）
+`ttsEngine: 'sapi'` 可以主动切到本地语音（完全离线、零成本，音色偏机械）。
+
+## 十一、边下边播（ffplay）
 
 `SoundPlayer` 只能播**完整文件**，所以流式 TTS 等于白给：首包 0.9 秒就到了，
 还得等 1.8 秒整段到齐才能出声。用 `ffplay` 吃 stdin 的裸 PCM，喂一片播一片。
@@ -295,7 +262,7 @@ TTS 系列**当前限时免费**（RPM 100 / TPM 10M）。设计模型和克隆�
 **字数越多，首包越晚**，所以想让大肥鱼反应快，回复就得短。这也是弹幕回复要限长、
 并且"只回最新那条"的原因。
 
-## 十三、语音长度上限 `ttsMaxChars`（默认 40）
+## 十二、语音长度上限 `ttsMaxChars`（默认 40）
 
 超长就截断，只念前半句。断点按这个顺序找：
 
