@@ -104,12 +104,54 @@ DSH 设置页里也能改同样的字段（`roomId` / `dryRun` / `vtsPort` / `tt
 如果连 `DANMU_MSG` 都没有，问题在连接/房间号，不在过滤器；
 如果有 `DANMU_MSG` 但没回复，看 `events` 里那条的 `action`，过滤器跳过的会写明原因。
 
+### 查梗：接的是本机那份 6668 条的梗库
+
+弹幕里**完整出现**某个梗的词条名，就把词条解释塞进大模型上下文，让它照资料说、别自己编出处。
+
+```mermaid
+flowchart LR
+  A[弹幕] --> B{梗库里有没有<br/>完整出现的标题?}
+  B -- 有 --> C[取词条<br/>用法+来源]
+  C --> D[塞给大模型<br/>plan 显示 梗库：xxx]
+  B -- 没有 --> E[正常聊天<br/>不确定就不硬解释]
+```
+
+数据源是 `astrbot_plugin_memewiki`（AstrBot 的「梗百科」插件）里那份 `data/memes.db`：
+
+| 项 | 值 |
+| --- | --- |
+| 词条数 | 6668（快照构建于 2026-10-26） |
+| 单次查询 | **0.7~1.5 ms**（`node:sqlite` 直读 SQLite，同进程） |
+| 依赖 | 零。用 Node 24 自带的 `node:sqlite`，不装 npm 包，不需要 Python |
+
+配置项：
+
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `memeEnabled` | `true` | 关掉就完全不查库 |
+| `memeDbPath` | `D:\deepseek harness\chajian\astrbot_plugin_memewiki\data\memes.db` | 换成你自己的库也行；文件不在就自动禁用，不影响直播 |
+| `memeMaxChars` | `220` | 喂给大模型的解释长度上限（词条原文常有几百字，全喂会让它照着念百科） |
+
+**匹配规则**沿用 memewiki 的原逻辑：弹幕里必须**完整出现**某个标题，取最长的那条；
+反过来不算（「你是什么」不会命中「你是什么冠军」）。ASCII 大小写不敏感，所以 `yyds` 能命中 `YYDS`。
+
+实测：普通弹幕 10 条**误命中 0 条**；`这不就是破防了嘛` → 破防、`yyds是什么意思` → YYDS、
+`尊嘟假嘟是什么意思啊` → 实际回复 `尊嘟假嘟就是真的假的啦，超可爱的！`，`plan` 里是
+`梗库：尊嘟假嘟 | 语音（MiMo 流式）`。
+
+⚠️ **没命中就不硬解释**。库里有 6668 条但不是全知，`家人们谁懂啊` 这种就查不到 ——
+这时让大模型自己判断，并在系统提示里明确要求"不确定就说这个我不太懂"，
+比硬编一个来源强。在线兜底（cnmeme.wiki）默认**关**：那台站在 Cloudflare 后面，
+Node 不走系统代理连不上，绕 PowerShell 一次又多花 1 秒 —— 直播等不起。
+
 ## 六、Agent 工具
 
 | 工具 | 用途 |
 | --- | --- |
-| `whale_live_status` | 看状态（房间、连接、VTS、队列、最近事件、`bili.cmds`） |
-| `whale_live_control` | `start` / `stop` / `vts-connect` / `vts-hotkeys` / `say` / `clear-expression` / `test-chat` / `probe-voice` / `snapshot` |
+| `whale_live_status` | 看状态（房间、连接、VTS、队列、最近事件、`bili.cmds`、梗库命中） |
+| `whale_live_control` | `start` / `stop` / `vts-connect` / `vts-hotkeys` / `say` / `clear-expression` / `test-chat` / `probe-voice` / `meme` / `snapshot` |
+
+`whale_live_control { action: "meme", text: "..." }` 可以**不直播**直接试查梗，返回词条和喂给大模型的那段上下文。
 
 例：让大肥鱼说一句话 —— `whale_live_control { action: "say", text: "谢谢大家，我下播啦" }`
 
